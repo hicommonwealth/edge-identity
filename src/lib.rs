@@ -42,11 +42,10 @@ extern crate sr_io as runtime_io;
 extern crate srml_balances as balances;
 extern crate srml_system as system;
 
-use primitives::H256;
-use runtime_primitives::traits::Hash;
+use runtime_primitives::traits::{Hash, MaybeSerializeDebug};
 use rstd::prelude::*;
 use system::ensure_signed;
-use runtime_support::{StorageValue, StorageMap};
+use runtime_support::{StorageValue, StorageMap, Parameter};
 use runtime_support::dispatch::Result;
 use primitives::ed25519;
 
@@ -54,19 +53,73 @@ use primitives::ed25519;
 pub type IdentityIndex = u32;
 
 pub trait Trait: system::Trait {
+    /// The identity type
+    type Identity: Parameter + MaybeSerializeDebug;
     /// The overarching event type.
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 }
 
+pub type LinkedProof = Option<Vec<u8>>;
 
-// External identity should be a packed array of bytes representing the
-// organization and the identity - { org, identity }
-// Packed encoding - [length of "github" in bytes, "github" in bytes, "drewstone" in bytes]
-pub type ExternalIdentity = Vec<u8>;
+decl_module! {
+    pub struct Module<T: Trait> for enum Call where origin: T::Origin {
+        fn deposit_event() = default;
 
-// Linked proof should be a byte array (indicative of some website link)
-pub type LinkedIdentityProof = Vec<u8>;
-pub type SigHash = ed25519::Signature;
+        fn link(origin, identity: T::Identity, proof_link: LinkedProof) -> Result {
+            let _sender = ensure_signed(origin)?;
+            let hashed_identity = T::Hashing::hash_of(&identity).into();
+
+            // Check if the identities match the sender
+            let (index, account, proof) = match <IdentityOf<T>>::get(hashed_identity) {
+                Some((index, account, proof)) => (index, account, proof),
+                None => (std::u32::MAX, _sender.clone(), None),
+            };
+
+            // TODO: Decide how we want to process proof updates
+            // currently this implements no check against updating
+            // proof links
+            if account == _sender.clone() {
+                if !proof.is_some() {
+                    let link_count = Self::linked_count();
+                    <LinkedIdentityCount<T>>::put(link_count + 1);
+                };
+
+                <IdentityOf<T>>::insert(hashed_identity, (index, _sender.clone(), proof_link));
+                Self::deposit_event(RawEvent::Linked(hashed_identity, index, account));
+            }
+
+            Ok(())
+        }
+
+        fn publish(origin, identity: T::Identity, sig: ed25519::Signature) -> Result {
+            let _sender = ensure_signed(origin)?;
+
+            unsafe {
+                let sender: [u8; 32] = std::mem::transmute_copy(&_sender);
+                let public = ed25519::Public(sender.into());
+                let hashed_identity = T::Hashing::hash_of(&identity);
+
+                let formatted_hash: [u8; 32] = std::mem::transmute_copy(&hashed_identity);
+
+                // Check the signature of the hash of the external identity
+                if ed25519::verify_strong(&sig, &formatted_hash[..], public) {
+                    // Check existence of identity
+                    ensure!(!<IdentityOf<T>>::exists(hashed_identity), "duplicate identities not allowed");
+
+                    let index = Self::identity_count();
+                    let mut idents = Self::identities();
+                    idents.push(hashed_identity);
+                    <Identities<T>>::put(idents);
+
+                    <IdentityOf<T>>::insert(hashed_identity, (index, _sender.clone(), None));
+                    Self::deposit_event(RawEvent::Published(hashed_identity, index, _sender.clone().into()));
+                }
+
+                Ok(())
+            }
+        }
+    }
+}
 
 /// An event in this module.
 decl_event!(
@@ -76,64 +129,6 @@ decl_event!(
     }
 );
 
-decl_module! {
-    pub struct Module<T: Trait> for enum Call where origin: T::Origin {
-        fn deposit_event() = default;
-
-        fn link(origin, identity: ExternalIdentity, proof_link: LinkedIdentityProof) -> Result {
-            let _sender = ensure_signed(origin)?;
-            let public = ed25519::Public(_sender.into());
-            let hashed_identity = T::Hashing::hash_of(&identity).into();
-
-            // Check if the identities match the sender
-            match <IdentityOf<T>>::get(hashed_identity) {
-
-                // TODO: Decide how we want to process proof updates
-                // currently this implements no check against updating
-                // proof links
-                Some((index, account, proof)) => {
-                    if account.into() == _sender.into() {
-                        if !proof.is_some() {
-                            <LinkedIdentityCount<T>>::mutate(|i| *i += 1);
-                        };
-
-                        <IdentityOf<T>>::insert(hashed_identity, (index, account, proof_link));
-                        Self::deposit_event(RawEvent::Linked(hashed_identity, index, account));
-                    } else {
-                        Err(format!("Origin {:?} doesn't match {:?}", _sender.into(), account.into()));   
-                    }
-                },
-                None => {
-                    Err(format!("No entry with hashed identity {:?}", hashed_identity));
-                },
-            };
-
-            Ok(())
-        }
-
-        fn publish(origin, identity: ExternalIdentity, sig: SigHash) -> Result {
-            let _sender = ensure_signed(origin)?;
-            let public = ed25519::Public(_sender.into());
-            let hashed_identity = T::Hashing::hash_of(&identity).into();
-
-            // Check the signature of the hash of the external identity
-            if ed25519::verify_strong(&sig, &hashed_identity[..], public) {
-                // Check existence of identity
-                ensure!(!<IdentityOf<T>>::exists(hashed_identity), "duplicate identities are not allowed");
-
-                let index = Self::identity_count();
-                <Identities<T>>::mutate(|identities| identities.push(hashed_identity));
-                <IdentityOf<T>>::insert(hashed_identity, (index, _sender, None));
-                Self::deposit_event(RawEvent::Published(hashed_identity, index, _sender.into()));
-            } else {
-                Err(format!("Bad signature on {:?}", hashed_identity));
-            }
-
-            Ok(())
-        }
-    }
-}
-
 decl_storage! {
     trait Store for Module<T: Trait> as IdentityStorage {
         /// The number of identities that have been added.
@@ -141,17 +136,86 @@ decl_storage! {
         /// The hashed identities.
         pub Identities get(identities): Vec<(T::Hash)>;
         /// Actual identity for a given hash, if it's current.
-        pub IdentityOf get(identity_of): map T::Hash => Option<(IdentityIndex, T::AccountId, Option<LinkedIdentityProof>)>;
+        pub IdentityOf get(identity_of): map T::Hash => Option<(IdentityIndex, T::AccountId, LinkedProof)>;
         /// The number of linked identities that have been added.
-        pub LinkedIdentityCount get(linked_identity_count): u32;
+        pub LinkedIdentityCount get(linked_count) build(|_| 0 as IdentityIndex) : IdentityIndex;
     }
 }
 
-
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use system::GenesisConfig;
+
+    use runtime_io::with_externalities;
+    use primitives::{H256, Blake2Hasher};
+    // The testing primitives are very useful for avoiding having to work with signatures
+    // or public keys. `u64` is used as the `AccountId` and no `Signature`s are requried.
+    use runtime_primitives::{
+        BuildStorage, traits::{BlakeTwo256, OnFinalise}, testing::{Digest, DigestItem, Header}
+    };
+
+    impl_outer_origin! {
+        pub enum Origin for Test {}
+    }
+
+    // For testing the module, we construct most of a mock runtime. This means
+    // first constructing a configuration type (`Test`) which `impl`s each of the
+    // configuration traits of modules we want to use.
+    #[derive(Clone, Eq, PartialEq)]
+    pub struct Test;
+    impl system::Trait for Test {
+        type Origin = Origin;
+        type Index = u64;
+        type BlockNumber = u64;
+        type Hash = H256;
+        type Hashing = BlakeTwo256;
+        type Digest = Digest;
+        type AccountId = H256;
+        type Header = Header;
+        type Event = ();
+        type Log = DigestItem;
+    }
+    impl balances::Trait for Test {
+        type Balance = u64;
+        type AccountIndex = u64;
+        type OnFreeBalanceZero = ();
+        type EnsureAccountLiquid = ();
+        type Event = ();
+    }
+
+    impl Trait for Test {
+        type Identity = Vec<u8>;
+        type Event = ();
+    }
+    type Example = Module<Test>;
+
+    // This function basically just builds a genesis storage key/value store according to
+    // our desired mockup.
+    fn new_test_ext() -> sr_io::TestExternalities<Blake2Hasher> {
+        let mut t = system::GenesisConfig::<Test>::default().build_storage().unwrap().0;
+        // We use default for brevity, but you can configure as desired if needed.
+        t.extend(balances::GenesisConfig::<Test>::default().build_storage().unwrap().0);
+        t.into()
+    }
+
     #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+    fn it_works_for_optional_value() {
+        with_externalities(&mut new_test_ext(), || {
+            // Check that GenesisBuilder works properly.
+            assert_eq!(Example::dummy(), Some(42));
+
+            // Check that accumulate works when we have Some value in Dummy already.
+            assert_ok!(Example::accumulate_dummy(Origin::signed(1), 27));
+            assert_eq!(Example::dummy(), Some(69));
+
+            // Check that finalising the block removes Dummy from storage.
+            <Example as OnFinalise<u64>>::on_finalise(1);
+            assert_eq!(Example::dummy(), None);
+
+            // Check that accumulate works when we Dummy has None in it.
+            assert_ok!(Example::accumulate_dummy(Origin::signed(1), 42));
+            assert_eq!(Example::dummy(), Some(42));
+        });
     }
 }
