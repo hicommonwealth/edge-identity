@@ -176,46 +176,19 @@ mod tests {
         type Event = ();
         type Log = DigestItem;
     }
-    impl balances::Trait for Test {
-        type Balance = u64;
-        type AccountIndex = u64;
-        type OnFreeBalanceZero = ();
-        type EnsureAccountLiquid = ();
-        type Event = ();
-    }
 
     impl Trait for Test {
         type Identity = Vec<u8>;
         type Event = ();
     }
-    type Example = Module<Test>;
+
+    type Identity = Module<Test>;
 
     // This function basically just builds a genesis storage key/value store according to
     // our desired mockup.
     fn new_test_ext() -> sr_io::TestExternalities<Blake2Hasher> {
         let mut t = system::GenesisConfig::<Test>::default().build_storage().unwrap().0;
         // We use default for brevity, but you can configure as desired if needed.
-        t.extend(balances::GenesisConfig::<Test>::default().build_storage().unwrap().0);
         t.into()
-    }
-
-    #[test]
-    fn it_works_for_optional_value() {
-        with_externalities(&mut new_test_ext(), || {
-            // Check that GenesisBuilder works properly.
-            assert_eq!(Example::dummy(), Some(42));
-
-            // Check that accumulate works when we have Some value in Dummy already.
-            assert_ok!(Example::accumulate_dummy(Origin::signed(1), 27));
-            assert_eq!(Example::dummy(), Some(69));
-
-            // Check that finalising the block removes Dummy from storage.
-            <Example as OnFinalise<u64>>::on_finalise(1);
-            assert_eq!(Example::dummy(), None);
-
-            // Check that accumulate works when we Dummy has None in it.
-            assert_ok!(Example::accumulate_dummy(Origin::signed(1), 42));
-            assert_eq!(Example::dummy(), Some(42));
-        });
     }
 }
