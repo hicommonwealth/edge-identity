@@ -27,6 +27,7 @@ extern crate serde;
 extern crate serde_derive;
 
 #[cfg(test)]
+#[macro_use]
 extern crate hex_literal;
 
 extern crate parity_codec as codec;
@@ -42,6 +43,7 @@ extern crate sr_io as runtime_io;
 extern crate srml_balances as balances;
 extern crate srml_system as system;
 
+use primitives::H256;
 use runtime_primitives::traits::{Hash, MaybeSerializeDebug};
 use rstd::prelude::*;
 use system::ensure_signed;
@@ -91,31 +93,59 @@ decl_module! {
             Ok(())
         }
 
-        fn publish(origin, identity: T::Identity, sig: ed25519::Signature) -> Result {
+        fn publish(origin, identity: T::Identity, signature: ed25519::Signature) -> Result {
             let _sender = ensure_signed(origin)?;
 
             unsafe {
                 let sender: [u8; 32] = std::mem::transmute_copy(&_sender);
                 let public = ed25519::Public(sender.into());
-                let hashed_identity = T::Hashing::hash_of(&identity);
+                let message: Vec<u8> = std::mem::transmute_copy(&identity);
 
-                let formatted_hash: [u8; 32] = std::mem::transmute_copy(&hashed_identity);
+                let hash_obj = T::Hashing::hash(&message[..]);
+                let hash: [u8; 32] = std::mem::transmute_copy(&hash_obj);
+
+                // println!("\n\n
+                //         OK:     {:?}
+                //         PK:     {:?}
+                //         MSG:    {:?}
+                //         HASH:   {:?}
+                //         SIG:    {:?}
+                //     \n\n",
+                //     ed25519::verify_strong(&signature, &hash, &public),
+                //     public,
+                //     message,
+                //     hash,
+                //     signature);
 
                 // Check the signature of the hash of the external identity
-                if ed25519::verify_strong(&sig, &formatted_hash[..], public) {
+                if ed25519::verify_strong(&signature, &hash, &public) {
                     // Check existence of identity
-                    ensure!(!<IdentityOf<T>>::exists(hashed_identity), "duplicate identities not allowed");
+                    ensure!(!<IdentityOf<T>>::exists(hash_obj), "duplicate identities not allowed");
+
+                    // println!("\n           MODULE LEVEL LOGGING             \n
+                    //         OK:     {:?}
+                    //         PK:     {:?}
+                    //         MSG:    {:?}
+                    //         HASH:   {:?}
+                    //         SIG:    {:?}
+                    //     \n\n",
+                    //     ed25519::verify_strong(&signature, &hash, &public),
+                    //     public,
+                    //     message,
+                    //     hash,
+                    //     signature);
 
                     let index = Self::identity_count();
                     let mut idents = Self::identities();
-                    idents.push(hashed_identity);
+                    idents.push(hash_obj);
                     <Identities<T>>::put(idents);
 
-                    <IdentityOf<T>>::insert(hashed_identity, (index, _sender.clone(), None));
-                    Self::deposit_event(RawEvent::Published(hashed_identity, index, _sender.clone().into()));
+                    <IdentityOf<T>>::insert(hash_obj, (index, _sender.clone(), None));
+                    Self::deposit_event(RawEvent::Published(hash_obj, index, _sender.clone().into()));
+                    return Ok(());
                 }
 
-                Ok(())
+                Err("Some error")
             }
         }
     }
@@ -148,12 +178,14 @@ mod tests {
     use system::GenesisConfig;
 
     use runtime_io::with_externalities;
-    use primitives::{H256, Blake2Hasher};
+    use runtime_io::ed25519::Pair;
+    use primitives::{H256, Blake2Hasher, Hasher};
     // The testing primitives are very useful for avoiding having to work with signatures
     // or public keys. `u64` is used as the `AccountId` and no `Signature`s are requried.
     use runtime_primitives::{
         BuildStorage, traits::{BlakeTwo256, OnFinalise}, testing::{Digest, DigestItem, Header}
     };
+
 
     impl_outer_origin! {
         pub enum Origin for Test {}
@@ -182,13 +214,49 @@ mod tests {
         type Event = ();
     }
 
+    type System = system::Module<Test>;
     type Identity = Module<Test>;
 
     // This function basically just builds a genesis storage key/value store according to
     // our desired mockup.
     fn new_test_ext() -> sr_io::TestExternalities<Blake2Hasher> {
-        let mut t = system::GenesisConfig::<Test>::default().build_storage().unwrap().0;
+        let t = system::GenesisConfig::<Test>::default().build_storage().unwrap().0;
         // We use default for brevity, but you can configure as desired if needed.
         t.into()
+    }
+
+    fn publish_identity_attestation(who: H256, message: &[u8], sig_hash: ed25519::Signature) -> super::Result {
+        Identity::publish(Origin::signed(who), message.to_vec(), sig_hash)
+    }
+
+    #[test]
+    fn propose_with_valid_sig_should_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let message: &[u8] = b"github.com/drewstone";
+            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
+            let signature = pair.sign(&hash);
+            let public: H256 = pair.public().0.into();
+
+            // verify_strong(&signature, &message[..], &public);
+
+            // println!("\n\n
+            //         OK:     {:?}
+            //         PK:     {:?}
+            //         MSG:    {:?}
+            //         HASH:   {:?}
+            //         SIG:    {:?}
+            //     \n\n",
+            //     ed25519::verify_strong(&signature, &hash, &pair.public()),
+            //     pair.public(),
+            //     message,
+            //     hash,
+            //     signature);
+
+            assert_ok!(publish_identity_attestation(public, message, signature));
+            println!("{:?}", System::events());
+        });
     }
 }
