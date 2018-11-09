@@ -58,6 +58,11 @@ decl_module! {
     pub struct Module<T: Trait> for enum Call where origin: T::Origin {
         fn deposit_event() = default;
 
+        /// Link an external proof to an existing identity iff the sender
+        /// is the original publisher of said identity.
+        /// 
+        /// Current implementation overwrites all proofs if safety checks
+        /// pass.
         pub fn link(origin, identity: T::Identity, proof_link: LinkedProof) -> Result {
             let _sender = ensure_signed(origin)?;
 
@@ -89,6 +94,14 @@ decl_module! {
             }
         }
 
+        /// Publish an identity with the hash of the signature. Ensures that
+        /// all identities are unique, so that no two identities of the same
+        /// can be published.
+        /// 
+        /// Current implementation suffers from squatter attacks. Additional
+        /// implementations could provide a mechanism for a trusted set of
+        /// authorities to delete a squatted identity OR implement storage
+        /// rent to disincentivize it.
         pub fn publish(origin, identity: T::Identity, signature: ed25519::Signature) -> Result {
             let _sender = ensure_signed(origin)?;
 

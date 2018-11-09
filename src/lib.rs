@@ -49,6 +49,7 @@ use primitives::ed25519;
 pub mod identity;
 use identity::{Module, Trait, RawEvent};
 
+// Tests for Identity Module
 #[cfg(test)]
 mod tests {
     use super::*;
