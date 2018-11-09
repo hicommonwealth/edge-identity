@@ -52,7 +52,7 @@ pub trait Trait: system::Trait {
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 }
 
-pub type LinkedProof = Option<Vec<u8>>;
+pub type LinkedProof = Vec<u8>;
 
 decl_module! {
     pub struct Module<T: Trait> for enum Call where origin: T::Origin {
@@ -60,28 +60,33 @@ decl_module! {
 
         pub fn link(origin, identity: T::Identity, proof_link: LinkedProof) -> Result {
             let _sender = ensure_signed(origin)?;
-            let hashed_identity = T::Hashing::hash_of(&identity).into();
 
-            // Check if the identities match the sender
-            let (index, account, proof) = match <IdentityOf<T>>::get(hashed_identity) {
-                Some((index, account, proof)) => (index, account, proof),
-                None => (std::u32::MAX, _sender.clone(), None),
-            };
+            unsafe {
+                let message: Vec<u8> = std::mem::transmute_copy(&identity);
+                let hash_obj = T::Hashing::hash(&message[..]).into();
 
-            // TODO: Decide how we want to process proof updates
-            // currently this implements no check against updating
-            // proof links
-            if account == _sender.clone() {
+                // Check that identity exists
+                ensure!(<IdentityOf<T>>::exists(hash_obj), "Identity does not exist");
+                let (index, account, proof) = match <IdentityOf<T>>::get(hash_obj) {
+                    Some((index, account, proof)) => (index, account, proof),
+                    None => (std::u32::MAX, _sender.clone(), None),
+                };
+
+                // Check that original sender and current sender match
+                ensure!(account == _sender.clone() && index < std::u32::MAX, "Identity does not exist");
+
+                // TODO: Decide how we want to process proof updates
+                // currently this implements no check against updating
+                // proof links
                 if !proof.is_some() {
                     let link_count = Self::linked_count();
                     <LinkedIdentityCount<T>>::put(link_count + 1);
                 };
 
-                <IdentityOf<T>>::insert(hashed_identity, (index, _sender.clone(), proof_link));
-                Self::deposit_event(RawEvent::Linked(hashed_identity, index, account));
+                <IdentityOf<T>>::insert(hash_obj, (index, _sender.clone(), Some(proof_link)));
+                Self::deposit_event(RawEvent::Linked(hash_obj, index, account));
+                Ok(())
             }
-
-            Ok(())
         }
 
         pub fn publish(origin, identity: T::Identity, signature: ed25519::Signature) -> Result {
@@ -95,48 +100,18 @@ decl_module! {
                 let hash_obj = T::Hashing::hash(&message[..]);
                 let hash: [u8; 32] = std::mem::transmute_copy(&hash_obj);
 
-                // println!("\n\n
-                //         OK:     {:?}
-                //         PK:     {:?}
-                //         MSG:    {:?}
-                //         HASH:   {:?}
-                //         SIG:    {:?}
-                //     \n\n",
-                //     ed25519::verify_strong(&signature, &hash, &public),
-                //     public,
-                //     message,
-                //     hash,
-                //     signature);
-
                 // Check the signature of the hash of the external identity
-                if ed25519::verify_strong(&signature, &hash, &public) {
-                    // Check existence of identity
-                    ensure!(!<IdentityOf<T>>::exists(hash_obj), "duplicate identities not allowed");
+                ensure!(ed25519::verify_strong(&signature, &hash, &public), "Invalid signature");
+                ensure!(!<IdentityOf<T>>::exists(hash_obj), "Identity already exists");
+                
+                let index = Self::identity_count();
+                let mut idents = Self::identities();
+                idents.push(hash_obj);
+                <Identities<T>>::put(idents);
 
-                    // println!("\n           MODULE LEVEL LOGGING             \n
-                    //         OK:     {:?}
-                    //         PK:     {:?}
-                    //         MSG:    {:?}
-                    //         HASH:   {:?}
-                    //         SIG:    {:?}
-                    //     \n\n",
-                    //     ed25519::verify_strong(&signature, &hash, &public),
-                    //     public,
-                    //     message,
-                    //     hash,
-                    //     signature);
-
-                    let index = Self::identity_count();
-                    let mut idents = Self::identities();
-                    idents.push(hash_obj);
-                    <Identities<T>>::put(idents);
-
-                    <IdentityOf<T>>::insert(hash_obj, (index, _sender.clone(), None));
-                    Self::deposit_event(RawEvent::Published(hash_obj, index, _sender.clone().into()));
-                    return Ok(());
-                }
-
-                Err("Some error")
+                <IdentityOf<T>>::insert(hash_obj, (index, _sender.clone(), None));
+                Self::deposit_event(RawEvent::Published(hash_obj, index, _sender.clone().into()));
+                Ok(())
             }
         }
     }
@@ -157,7 +132,7 @@ decl_storage! {
         /// The hashed identities.
         pub Identities get(identities): Vec<(T::Hash)>;
         /// Actual identity for a given hash, if it's current.
-        pub IdentityOf get(identity_of): map T::Hash => Option<(IdentityIndex, T::AccountId, LinkedProof)>;
+        pub IdentityOf get(identity_of): map T::Hash => Option<(IdentityIndex, T::AccountId, Option<LinkedProof>)>;
         /// The number of linked identities that have been added.
         pub LinkedIdentityCount get(linked_count) build(|_| 0 as IdentityIndex) : IdentityIndex;
     }

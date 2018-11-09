@@ -47,11 +47,12 @@ use runtime_support::dispatch::Result;
 use primitives::ed25519;
 
 pub mod identity;
-use identity::{Module, Trait};
+use identity::{Module, Trait, RawEvent};
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use system::{EventRecord, Phase};
     use runtime_io::with_externalities;
     use runtime_io::ed25519::Pair;
     use primitives::{H256, Blake2Hasher, Hasher};
@@ -110,8 +111,12 @@ mod tests {
         t.into()
     }
 
-    fn publish_identity_attestation(who: H256, message: &[u8], sig_hash: ed25519::Signature) -> super::Result {
-        Identity::publish(Origin::signed(who), message.to_vec(), sig_hash)
+    fn publish_identity_attestation(who: H256, identity: &[u8], signature: ed25519::Signature) -> super::Result {
+        Identity::publish(Origin::signed(who), identity.to_vec(), signature)
+    }
+
+    fn link_identity_with_proof(who: H256, identity: &[u8], proof_link: &[u8]) -> super::Result {
+        Identity::link(Origin::signed(who), identity.to_vec(), proof_link.to_vec())
     }
 
     #[test]
@@ -122,26 +127,82 @@ mod tests {
             let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
             let message: &[u8] = b"github.com/drewstone";
             let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
+
             let signature = pair.sign(&hash);
             let public: H256 = pair.public().0.into();
 
-            // verify_strong(&signature, &message[..], &public);
+            assert_ok!(publish_identity_attestation(public, message, signature));
+            assert_eq!(System::events(), vec![
+                EventRecord {
+                    phase: Phase::ApplyExtrinsic(0),
+                    event: Event::identity(RawEvent::Published(H256::from(hash), 0, public))
+                }]
+            );
+        });
+    }
 
-            // println!("\n\n
-            //         OK:     {:?}
-            //         PK:     {:?}
-            //         MSG:    {:?}
-            //         HASH:   {:?}
-            //         SIG:    {:?}
-            //     \n\n",
-            //     ed25519::verify_strong(&signature, &hash, &pair.public()),
-            //     pair.public(),
-            //     message,
-            //     hash,
-            //     signature);
+    #[test]
+    fn publish_with_invalid_sig_should_fail() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let wrong: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f61"));
+            let message: &[u8] = b"github.com/drewstone";
+
+            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
+
+            let signature = wrong.sign(&hash);
+            let public: H256 = pair.public().0.into();
+
+            assert_eq!(publish_identity_attestation(public, message, signature), Err("Invalid signature"));
+
+        });
+    }
+
+    #[test]
+    fn propose_and_link_should_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let message: &[u8] = b"github.com/drewstone";
+            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
+
+            let signature = pair.sign(&hash);
+            let public: H256 = pair.public().0.into();
 
             assert_ok!(publish_identity_attestation(public, message, signature));
-            println!("{:?}", System::events());
+
+            let proof_link: &[u8] = b"www.proof.com/link_of_extra_proof";
+            // println!("{:?}", System::events());
+            assert_ok!(link_identity_with_proof(public, message, proof_link));
+            // println!("{:?}", System::events());
+            assert_eq!(System::events(), vec![
+                EventRecord {
+                    phase: Phase::ApplyExtrinsic(0),
+                    event: Event::identity(RawEvent::Published(H256::from(hash), 0, public))
+                },
+                EventRecord {
+                    phase: Phase::ApplyExtrinsic(0),
+                    event: Event::identity(RawEvent::Linked(H256::from(hash), 0, public))
+                }]
+            );
+        });
+    }
+
+    #[test]
+    fn link_without_publish_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let message: &[u8] = b"github.com/drewstone";
+            let public: H256 = pair.public().0.into();
+
+            let proof_link: &[u8] = b"www.proof.com/link_of_extra_proof";
+            assert_eq!(link_identity_with_proof(public, message, proof_link), Err("Identity does not exist"));
+            // assert_ok!(link_identity_with_proof(public, message, proof_link));
         });
     }
 }
