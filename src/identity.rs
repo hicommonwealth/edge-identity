@@ -48,6 +48,8 @@ pub type IdentityIndex = u32;
 pub trait Trait: system::Trait {
     /// The identity type
     type Identity: Parameter + MaybeSerializeDebug;
+    /// The claims type
+    type Claim: Parameter + MaybeSerializeDebug;
     /// The overarching event type.
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 }
@@ -89,7 +91,10 @@ decl_module! {
                 };
 
                 <IdentityOf<T>>::insert(hash_obj, (index, _sender.clone(), Some(proof_link)));
-                Self::deposit_event(RawEvent::Linked(hash_obj, index, account));
+                Self::deposit_event(RawEvent::Linked(hash_obj,
+                                                     index,
+                                                     account,
+                                                     identity));
                 Ok(())
             }
         }
@@ -123,18 +128,40 @@ decl_module! {
                 <Identities<T>>::put(idents);
 
                 <IdentityOf<T>>::insert(hash_obj, (index, _sender.clone(), None));
-                Self::deposit_event(RawEvent::Published(hash_obj, index, _sender.clone().into()));
+                Self::deposit_event(RawEvent::Published(hash_obj,
+                                                        index,
+                                                        _sender.clone().into(),
+                                                        identity));
                 Ok(())
             }
+        }
+
+        /// Add a claim as a claims issuer. Ensures that the sender is currently
+        /// an active claims issuer. Ensures that the identity exists by checking
+        /// hash exists in the Identities map.
+        pub fn add_claim(origin, identity: T::Identity, claim: T::Claim) -> Result {
+            Ok(())
+        }
+
+        /// Remove a claim as a claims issuer. Ensures that the sender is an active
+        /// claims issuer. Ensures that the sender has issued a claim over the
+        /// identity provided to the module.
+        pub fn remove_claim(origin, identity: T::Identity) -> Result {
+            Ok(())
         }
     }
 }
 
 /// An event in this module.
 decl_event!(
-    pub enum Event<T> where <T as system::Trait>::Hash, <T as system::Trait>::AccountId {
-        Published(Hash, IdentityIndex, AccountId),
-        Linked(Hash, IdentityIndex, AccountId),
+    pub enum Event<T> where <T as system::Trait>::Hash,
+                            <T as system::Trait>::AccountId,
+                            <T as Trait>::Identity,
+                            <T as Trait>::Claim  {
+        Published(Hash, IdentityIndex, AccountId, Identity),
+        Linked(Hash, IdentityIndex, AccountId, Identity),
+        AddedClaim(Hash, Claim, AccountId, Identity),
+        RemovedClaim(Hash, Claim, AccountId, Identity),
     }
 );
 
@@ -148,5 +175,10 @@ decl_storage! {
         pub IdentityOf get(identity_of): map T::Hash => Option<(IdentityIndex, T::AccountId, Option<LinkedProof>)>;
         /// The number of linked identities that have been added.
         pub LinkedIdentityCount get(linked_count) build(|_| 0 as IdentityIndex) : IdentityIndex;
+        /// The set of active claims issuers
+        pub ClaimsIssuers get(claims_issuers) config(): Vec<T::AccountId>;
+        /// The claims mapping for identity records: (claims_issuer, claim)
+        pub Claims get(claims): map T::Hash => Option<Vec<(T::AccountId, T::Claim)>>;
+
     }
 }

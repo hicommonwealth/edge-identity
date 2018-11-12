@@ -53,6 +53,7 @@ use identity::{Module, Trait, RawEvent};
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use system::{EventRecord, Phase};
     use runtime_io::with_externalities;
     use runtime_io::ed25519::Pair;
@@ -98,6 +99,7 @@ mod tests {
 
     impl Trait for Test {
         type Identity = Vec<u8>;
+        type Claim = Vec<u8>;
         type Event = Event;
     }
 
@@ -107,8 +109,11 @@ mod tests {
     // This function basically just builds a genesis storage key/value store according to
     // our desired mockup.
     fn new_test_ext() -> sr_io::TestExternalities<Blake2Hasher> {
-        let t = system::GenesisConfig::<Test>::default().build_storage().unwrap().0;
+        let mut t = system::GenesisConfig::<Test>::default().build_storage().unwrap().0;
         // We use default for brevity, but you can configure as desired if needed.
+        t.extend(identity::GenesisConfig::<Test>{
+            claims_issuers: [H256::from(1), H256::from(2), H256::from(3)].to_vec(),
+        }.build_storage().unwrap().0);
         t.into()
     }
 
@@ -136,7 +141,7 @@ mod tests {
             assert_eq!(System::events(), vec![
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
-                    event: Event::identity(RawEvent::Published(H256::from(hash), 0, public))
+                    event: Event::identity(RawEvent::Published(H256::from(hash), 0, public, message.to_vec()))
                 }]
             );
         });
@@ -182,11 +187,11 @@ mod tests {
             assert_eq!(System::events(), vec![
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
-                    event: Event::identity(RawEvent::Published(H256::from(hash), 0, public))
+                    event: Event::identity(RawEvent::Published(H256::from(hash), 0, public, message.to_vec()))
                 },
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
-                    event: Event::identity(RawEvent::Linked(H256::from(hash), 0, public))
+                    event: Event::identity(RawEvent::Linked(H256::from(hash), 0, public, message.to_vec()))
                 }]
             );
         });
