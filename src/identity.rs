@@ -140,14 +140,45 @@ decl_module! {
         /// an active claims issuer. Ensures that the identity exists by checking
         /// hash exists in the Identities map.
         pub fn add_claim(origin, identity: T::Identity, claim: T::Claim) -> Result {
-            Ok(())
+            let _sender = ensure_signed(origin)?;
+
+            unsafe {
+                let message: Vec<u8> = std::mem::transmute_copy(&identity);
+                let hash_obj = T::Hashing::hash(&message[..]);
+
+                let issuers: Vec<T::AccountId> = Self::claims_issuers();
+                ensure!(issuers.iter().any(|id| id == &_sender), "Invalid claims issuer");
+                ensure!(<IdentityOf<T>>::exists(hash_obj), "Invalid identity record");
+
+                let mut claims = Self::claims(hash_obj);
+                claims.push((_sender.clone(), claim));
+                <Claims<T>>::insert(hash_obj, claims);
+                Ok(())
+            }
         }
 
         /// Remove a claim as a claims issuer. Ensures that the sender is an active
         /// claims issuer. Ensures that the sender has issued a claim over the
         /// identity provided to the module.
         pub fn remove_claim(origin, identity: T::Identity) -> Result {
-            Ok(())
+            let _sender = ensure_signed(origin)?;
+
+            unsafe {
+
+                let message: Vec<u8> = std::mem::transmute_copy(&identity);
+                let hash_obj = T::Hashing::hash(&message[..]);
+                let issuers: Vec<T::AccountId> = Self::claims_issuers();
+
+                ensure!(issuers.iter().any(|id| id == &_sender), "Invalid claims issuer");
+                ensure!(<IdentityOf<T>>::exists(hash_obj), "Invalid identity record");
+
+                let mut claims = Self::claims(hash_obj);
+                let index = claims.iter().position(|issuer| issuer.0 == _sender.clone()).unwrap();
+                claims.remove(index);
+                <Claims<T>>::insert(hash_obj, claims);
+
+                Ok(())
+            }
         }
     }
 }
@@ -178,7 +209,7 @@ decl_storage! {
         /// The set of active claims issuers
         pub ClaimsIssuers get(claims_issuers) config(): Vec<T::AccountId>;
         /// The claims mapping for identity records: (claims_issuer, claim)
-        pub Claims get(claims): map T::Hash => Option<Vec<(T::AccountId, T::Claim)>>;
+        pub Claims get(claims): map T::Hash => Vec<(T::AccountId, T::Claim)>;
 
     }
 }
