@@ -46,8 +46,6 @@ use primitives::ed25519;
 pub type IdentityIndex = u32;
 
 pub trait Trait: system::Trait {
-    /// The identity type
-    type Identity: Parameter + MaybeSerializeDebug;
     /// The claims type
     type Claim: Parameter + MaybeSerializeDebug;
     /// The overarching event type.
@@ -65,38 +63,32 @@ decl_module! {
         /// 
         /// Current implementation overwrites all proofs if safety checks
         /// pass.
-        pub fn link(origin, identity: T::Identity, proof_link: LinkedProof) -> Result {
+        pub fn link(origin, identity_hash: T::Hash, proof_link: LinkedProof) -> Result {
             let _sender = ensure_signed(origin)?;
 
-            unsafe {
-                let message: Vec<u8> = std::mem::transmute_copy(&identity);
-                let hash_obj = T::Hashing::hash(&message[..]).into();
+            // Check that identity exists
+            ensure!(<IdentityOf<T>>::exists(identity_hash), "Identity does not exist");
+            let (index, account, proof) = match <IdentityOf<T>>::get(identity_hash) {
+                Some((index, account, proof)) => (index, account, proof),
+                None => (std::u32::MAX, _sender.clone(), None),
+            };
 
-                // Check that identity exists
-                ensure!(<IdentityOf<T>>::exists(hash_obj), "Identity does not exist");
-                let (index, account, proof) = match <IdentityOf<T>>::get(hash_obj) {
-                    Some((index, account, proof)) => (index, account, proof),
-                    None => (std::u32::MAX, _sender.clone(), None),
-                };
+            // Check that original sender and current sender match
+            ensure!(account == _sender.clone() && index < std::u32::MAX, "Identity does not exist");
 
-                // Check that original sender and current sender match
-                ensure!(account == _sender.clone() && index < std::u32::MAX, "Identity does not exist");
+            // TODO: Decide how we want to process proof updates
+            // currently this implements no check against updating
+            // proof links
+            if !proof.is_some() {
+                let link_count = Self::linked_count();
+                <LinkedIdentityCount<T>>::put(link_count + 1);
+            };
 
-                // TODO: Decide how we want to process proof updates
-                // currently this implements no check against updating
-                // proof links
-                if !proof.is_some() {
-                    let link_count = Self::linked_count();
-                    <LinkedIdentityCount<T>>::put(link_count + 1);
-                };
-
-                <IdentityOf<T>>::insert(hash_obj, (index, _sender.clone(), Some(proof_link)));
-                Self::deposit_event(RawEvent::Linked(hash_obj,
-                                                     index,
-                                                     account,
-                                                     identity));
-                Ok(())
-            }
+            <IdentityOf<T>>::insert(identity_hash, (index, _sender.clone(), Some(proof_link)));
+            Self::deposit_event(RawEvent::Linked(identity_hash,
+                                                 index,
+                                                 account));
+            Ok(())
         }
 
         /// Publish an identity with the hash of the signature. Ensures that
@@ -107,78 +99,66 @@ decl_module! {
         /// implementations could provide a mechanism for a trusted set of
         /// authorities to delete a squatted identity OR implement storage
         /// rent to disincentivize it.
-        pub fn publish(origin, identity: T::Identity, signature: ed25519::Signature) -> Result {
+        pub fn publish(origin, identity_hash: T::Hash, signature: ed25519::Signature) -> Result {
             let _sender = ensure_signed(origin)?;
 
+            // Check the signature of the hash of the external identity
             unsafe {
                 let sender: [u8; 32] = std::mem::transmute_copy(&_sender);
                 let public = ed25519::Public(sender.into());
-                let message: Vec<u8> = std::mem::transmute_copy(&identity);
+                let hash: [u8; 32] = std::mem::transmute_copy(&identity_hash);
 
-                let hash_obj = T::Hashing::hash(&message[..]);
-                let hash: [u8; 32] = std::mem::transmute_copy(&hash_obj);
-
-                // Check the signature of the hash of the external identity
-                ensure!(ed25519::verify_strong(&signature, &hash, &public), "Invalid signature");
-                ensure!(!<IdentityOf<T>>::exists(hash_obj), "Identity already exists");
-                
-                let index = Self::identity_count();
-                let mut idents = Self::identities();
-                idents.push(hash_obj);
-                <Identities<T>>::put(idents);
-
-                <IdentityOf<T>>::insert(hash_obj, (index, _sender.clone(), None));
-                Self::deposit_event(RawEvent::Published(hash_obj,
-                                                        index,
-                                                        _sender.clone().into(),
-                                                        identity));
-                Ok(())
+                ensure!(ed25519::verify_strong(&signature, &hash, &public), "Invalid signature");                
             }
+
+            ensure!(!<IdentityOf<T>>::exists(identity_hash), "Identity already exists");
+            
+            let index = Self::identity_count();
+            let mut idents = Self::identities();
+            idents.push(identity_hash);
+            <Identities<T>>::put(idents);
+
+            <IdentityOf<T>>::insert(identity_hash, (index, _sender.clone(), None));
+            Self::deposit_event(RawEvent::Published(identity_hash,
+                                                    index,
+                                                    _sender.clone().into()));
+            Ok(())
         }
 
         /// Add a claim as a claims issuer. Ensures that the sender is currently
         /// an active claims issuer. Ensures that the identity exists by checking
         /// hash exists in the Identities map.
-        pub fn add_claim(origin, identity: T::Identity, claim: T::Claim) -> Result {
+        pub fn add_claim(origin, identity_hash: T::Hash, claim: T::Claim) -> Result {
             let _sender = ensure_signed(origin)?;
+            
+            let issuers: Vec<T::AccountId> = Self::claims_issuers();
+            ensure!(issuers.iter().any(|id| id == &_sender), "Invalid claims issuer");
+            ensure!(<IdentityOf<T>>::exists(identity_hash), "Invalid identity record");
 
-            unsafe {
-                let message: Vec<u8> = std::mem::transmute_copy(&identity);
-                let hash_obj = T::Hashing::hash(&message[..]);
-
-                let issuers: Vec<T::AccountId> = Self::claims_issuers();
-                ensure!(issuers.iter().any(|id| id == &_sender), "Invalid claims issuer");
-                ensure!(<IdentityOf<T>>::exists(hash_obj), "Invalid identity record");
-
-                let mut claims = Self::claims(hash_obj);
-                claims.push((_sender.clone(), claim));
-                <Claims<T>>::insert(hash_obj, claims);
-                Ok(())
-            }
+            let mut claims = Self::claims(identity_hash);
+            claims.push((_sender.clone(), claim));
+            <Claims<T>>::insert(identity_hash, claims);
+            Ok(())
         }
 
         /// Remove a claim as a claims issuer. Ensures that the sender is an active
         /// claims issuer. Ensures that the sender has issued a claim over the
         /// identity provided to the module.
-        pub fn remove_claim(origin, identity: T::Identity) -> Result {
+        pub fn remove_claim(origin, identity_hash: T::Hash) -> Result {
             let _sender = ensure_signed(origin)?;
 
-            unsafe {
+            let issuers: Vec<T::AccountId> = Self::claims_issuers();
+            ensure!(issuers.iter().any(|id| id == &_sender), "Invalid claims issuer");
+            ensure!(<IdentityOf<T>>::exists(identity_hash), "Invalid identity record");
 
-                let message: Vec<u8> = std::mem::transmute_copy(&identity);
-                let hash_obj = T::Hashing::hash(&message[..]);
-                let issuers: Vec<T::AccountId> = Self::claims_issuers();
+            let mut claims = Self::claims(identity_hash);
+            ensure!(claims.iter().any(|claim| claim.0 == _sender.clone()), "No existing claim under issuer");
 
-                ensure!(issuers.iter().any(|id| id == &_sender), "Invalid claims issuer");
-                ensure!(<IdentityOf<T>>::exists(hash_obj), "Invalid identity record");
+            let index = claims.iter().position(|claim| claim.0 == _sender.clone()).unwrap();
+            claims.remove(index);
+            <Claims<T>>::insert(identity_hash, claims);
 
-                let mut claims = Self::claims(hash_obj);
-                let index = claims.iter().position(|issuer| issuer.0 == _sender.clone()).unwrap();
-                claims.remove(index);
-                <Claims<T>>::insert(hash_obj, claims);
-
-                Ok(())
-            }
+            Ok(())
         }
     }
 }
@@ -187,12 +167,11 @@ decl_module! {
 decl_event!(
     pub enum Event<T> where <T as system::Trait>::Hash,
                             <T as system::Trait>::AccountId,
-                            <T as Trait>::Identity,
                             <T as Trait>::Claim  {
-        Published(Hash, IdentityIndex, AccountId, Identity),
-        Linked(Hash, IdentityIndex, AccountId, Identity),
-        AddedClaim(Hash, Claim, AccountId, Identity),
-        RemovedClaim(Hash, Claim, AccountId, Identity),
+        Published(Hash, IdentityIndex, AccountId),
+        Linked(Hash, IdentityIndex, AccountId),
+        AddedClaim(Hash, Claim, AccountId),
+        RemovedClaim(Hash, Claim, AccountId),
     }
 );
 
