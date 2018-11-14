@@ -35,7 +35,7 @@ extern crate sr_io as runtime_io;
 extern crate srml_balances as balances;
 extern crate srml_system as system;
 
-use runtime_primitives::traits::{Hash, MaybeSerializeDebug};
+use runtime_primitives::traits::{MaybeSerializeDebug};
 use rstd::prelude::*;
 use system::ensure_signed;
 use runtime_support::{StorageValue, StorageMap, Parameter};
