@@ -85,9 +85,7 @@ decl_module! {
             };
 
             <IdentityOf<T>>::insert(identity_hash, (index, _sender.clone(), Some(proof_link)));
-            Self::deposit_event(RawEvent::Linked(identity_hash,
-                                                 index,
-                                                 account));
+            Self::deposit_event(RawEvent::Linked(identity_hash, index, account));
             Ok(())
         }
 
@@ -119,9 +117,7 @@ decl_module! {
             <Identities<T>>::put(idents);
 
             <IdentityOf<T>>::insert(identity_hash, (index, _sender.clone(), None));
-            Self::deposit_event(RawEvent::Published(identity_hash,
-                                                    index,
-                                                    _sender.clone().into()));
+            Self::deposit_event(RawEvent::Published(identity_hash, index, _sender.clone().into()));
             Ok(())
         }
 
