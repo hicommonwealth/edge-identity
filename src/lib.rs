@@ -112,6 +112,7 @@ mod tests {
         // We use default for brevity, but you can configure as desired if needed.
         t.extend(identity::GenesisConfig::<Test>{
             claims_issuers: [H256::from(1), H256::from(2), H256::from(3)].to_vec(),
+            _genesis_phantom_data: Default::default(),
         }.build_storage().unwrap().0);
         t.into()
     }
