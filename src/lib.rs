@@ -53,6 +53,7 @@ use identity::{Module, Trait, RawEvent};
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use system::{EventRecord, Phase};
     use runtime_io::with_externalities;
     use runtime_io::ed25519::Pair;
@@ -97,7 +98,7 @@ mod tests {
     }
 
     impl Trait for Test {
-        type Identity = Vec<u8>;
+        type Claim = Vec<u8>;
         type Event = Event;
     }
 
@@ -107,17 +108,28 @@ mod tests {
     // This function basically just builds a genesis storage key/value store according to
     // our desired mockup.
     fn new_test_ext() -> sr_io::TestExternalities<Blake2Hasher> {
-        let t = system::GenesisConfig::<Test>::default().build_storage().unwrap().0;
+        let mut t = system::GenesisConfig::<Test>::default().build_storage().unwrap().0;
         // We use default for brevity, but you can configure as desired if needed.
+        t.extend(identity::GenesisConfig::<Test>{
+            claims_issuers: [H256::from(1), H256::from(2), H256::from(3)].to_vec(),
+        }.build_storage().unwrap().0);
         t.into()
     }
 
-    fn publish_identity_attestation(who: H256, identity: &[u8], signature: ed25519::Signature) -> super::Result {
-        Identity::publish(Origin::signed(who), identity.to_vec(), signature)
+    fn publish_identity_attestation(who: H256, identity_hash: H256, signature: ed25519::Signature) -> super::Result {
+        Identity::publish(Origin::signed(who), identity_hash, signature)
     }
 
-    fn link_identity_with_proof(who: H256, identity: &[u8], proof_link: &[u8]) -> super::Result {
-        Identity::link(Origin::signed(who), identity.to_vec(), proof_link.to_vec())
+    fn link_identity_with_proof(who: H256, identity_hash: H256, proof_link: &[u8]) -> super::Result {
+        Identity::link(Origin::signed(who), identity_hash, proof_link.to_vec())
+    }
+
+    fn add_claim_to_identity(who: H256, identity_hash: H256, claim: &[u8]) -> super::Result {
+        Identity::add_claim(Origin::signed(who), identity_hash, claim.to_vec())
+    }
+
+    fn remove_claim_from_identity(who: H256, identity_hash: H256) -> super::Result {
+        Identity::remove_claim(Origin::signed(who), identity_hash)
     }
 
     #[test]
@@ -127,12 +139,13 @@ mod tests {
 
             let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
             let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
             let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
 
             let signature = pair.sign(&hash);
             let public: H256 = pair.public().0.into();
 
-            assert_ok!(publish_identity_attestation(public, message, signature));
+            assert_ok!(publish_identity_attestation(public, identity_hash, signature));
             assert_eq!(System::events(), vec![
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
@@ -150,13 +163,14 @@ mod tests {
             let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
             let wrong: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f61"));
             let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
 
             let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
 
             let signature = wrong.sign(&hash);
             let public: H256 = pair.public().0.into();
 
-            assert_eq!(publish_identity_attestation(public, message, signature), Err("Invalid signature"));
+            assert_eq!(publish_identity_attestation(public, identity_hash, signature), Err("Invalid signature"));
 
         });
     }
@@ -168,17 +182,16 @@ mod tests {
 
             let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
             let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
             let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
 
             let signature = pair.sign(&hash);
             let public: H256 = pair.public().0.into();
 
-            assert_ok!(publish_identity_attestation(public, message, signature));
+            assert_ok!(publish_identity_attestation(public, identity_hash, signature));
 
             let proof_link: &[u8] = b"www.proof.com/link_of_extra_proof";
-            // println!("{:?}", System::events());
-            assert_ok!(link_identity_with_proof(public, message, proof_link));
-            // println!("{:?}", System::events());
+            assert_ok!(link_identity_with_proof(public, identity_hash, proof_link));
             assert_eq!(System::events(), vec![
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
@@ -199,11 +212,112 @@ mod tests {
 
             let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
             let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
             let public: H256 = pair.public().0.into();
 
             let proof_link: &[u8] = b"www.proof.com/link_of_extra_proof";
-            assert_eq!(link_identity_with_proof(public, message, proof_link), Err("Identity does not exist"));
-            // assert_ok!(link_identity_with_proof(public, message, proof_link));
+            assert_eq!(link_identity_with_proof(public, identity_hash, proof_link), Err("Identity does not exist"));
+        });
+    }
+
+    #[test]
+    fn add_claim_without_valid_identity_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let issuer = H256::from(1);
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            let claim: &[u8] = b"is over 25 years of age";
+            
+            assert_eq!(add_claim_to_identity(issuer, identity_hash, claim), Err("Invalid identity record"));
+        });
+    }
+
+    #[test]
+    fn add_claim_as_invalid_issuer_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let public: H256 = pair.public().0.into();
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            let claim: &[u8] = b"is over 25 years of age";
+            
+            assert_eq!(add_claim_to_identity(public, identity_hash, claim), Err("Invalid claims issuer"));
+        });
+    }
+
+    #[test]
+    fn add_claim_valid_should_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
+
+            let signature = pair.sign(&hash);
+            let public: H256 = pair.public().0.into();
+
+            assert_ok!(publish_identity_attestation(public, identity_hash, signature));
+            
+            let issuer = H256::from(1);
+            let claim: &[u8] = b"is over 25 years of age";
+            assert_ok!(add_claim_to_identity(issuer, identity_hash, claim));
+        });
+    }
+
+    #[test]
+    fn remove_claim_without_valid_identity_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let issuer = H256::from(1);
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            
+            assert_eq!(remove_claim_from_identity(issuer, identity_hash), Err("Invalid identity record"));
+        });
+    }
+
+    #[test]
+    fn remove_claim_as_invalid_issuer_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let public: H256 = pair.public().0.into();
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            
+            assert_eq!(remove_claim_from_identity(public, identity_hash), Err("Invalid claims issuer"));
+        });
+    }
+
+    #[test]
+    fn remove_claim_not_issued_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
+
+            let signature = pair.sign(&hash);
+            let public: H256 = pair.public().0.into();
+
+            assert_ok!(publish_identity_attestation(public, identity_hash, signature));
+            
+            let issuer = H256::from(1);
+            let claim: &[u8] = b"is over 25 years of age";
+            assert_ok!(add_claim_to_identity(issuer, identity_hash, claim));
+
+            let another_issuer = H256::from(2);
+            assert_eq!(remove_claim_from_identity(another_issuer, identity_hash), Err("No existing claim under issuer"));
         });
     }
 }
