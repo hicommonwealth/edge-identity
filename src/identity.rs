@@ -80,8 +80,7 @@ decl_module! {
             // currently this implements no check against updating
             // proof links
             if !proof.is_some() {
-                let link_count = Self::linked_count();
-                <LinkedIdentityCount<T>>::put(link_count + 1);
+                <LinkedIdentityCount<T>>::mutate(|i| *i += 1);
             };
 
             <IdentityOf<T>>::insert(identity_hash, (index, _sender.clone(), Some(proof_link)));
@@ -112,6 +111,7 @@ decl_module! {
             ensure!(!<IdentityOf<T>>::exists(identity_hash), "Identity already exists");
             
             let index = Self::identity_count();
+            <IdentityCount<T>>::mutate(|i| *i += 1);
             let mut idents = Self::identities();
             idents.push(identity_hash);
             <Identities<T>>::put(idents);
@@ -174,13 +174,13 @@ decl_event!(
 decl_storage! {
     trait Store for Module<T: Trait> as IdentityStorage {
         /// The number of identities that have been added.
-        pub IdentityCount get(identity_count) build(|_| 0 as IdentityIndex) : IdentityIndex;
+        pub IdentityCount get(identity_count): u32;
         /// The hashed identities.
         pub Identities get(identities): Vec<(T::Hash)>;
         /// Actual identity for a given hash, if it's current.
         pub IdentityOf get(identity_of): map T::Hash => Option<(IdentityIndex, T::AccountId, Option<LinkedProof>)>;
         /// The number of linked identities that have been added.
-        pub LinkedIdentityCount get(linked_count) build(|_| 0 as IdentityIndex) : IdentityIndex;
+        pub LinkedIdentityCount get(linked_count): u32;
         /// The set of active claims issuers
         pub ClaimsIssuers get(claims_issuers) config(): Vec<T::AccountId>;
         /// The claims mapping for identity records: (claims_issuer, claim)
