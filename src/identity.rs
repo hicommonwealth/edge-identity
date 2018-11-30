@@ -40,7 +40,6 @@ use rstd::prelude::*;
 use system::ensure_signed;
 use runtime_support::{StorageValue, StorageMap, Parameter};
 use runtime_support::dispatch::Result;
-use primitives::ed25519;
 
 /// An identity index.
 pub type IdentityIndex = u32;
@@ -67,14 +66,13 @@ decl_module! {
             let _sender = ensure_signed(origin)?;
 
             // Check that identity exists
-            ensure!(<IdentityOf<T>>::exists(identity_hash), "Identity does not exist");
             let (index, account, proof) = match <IdentityOf<T>>::get(identity_hash) {
                 Some((index, account, proof)) => (index, account, proof),
-                None => (std::u32::MAX, _sender.clone(), None),
+                None => return Err("Identity does not exist"),
             };
 
             // Check that original sender and current sender match
-            ensure!(account == _sender.clone() && index < std::u32::MAX, "Identity does not exist");
+            ensure!(account == _sender, "Stored identity does not match sender");
 
             // TODO: Decide how we want to process proof updates
             // currently this implements no check against updating
@@ -96,17 +94,8 @@ decl_module! {
         /// implementations could provide a mechanism for a trusted set of
         /// authorities to delete a squatted identity OR implement storage
         /// rent to disincentivize it.
-        pub fn publish(origin, identity_hash: T::Hash, signature: ed25519::Signature) -> Result {
+        pub fn publish(origin, identity_hash: T::Hash) -> Result {
             let _sender = ensure_signed(origin)?;
-
-            // Check the signature of the hash of the external identity
-            unsafe {
-                let sender: [u8; 32] = std::mem::transmute_copy(&_sender);
-                let public = ed25519::Public(sender.into());
-                let hash: [u8; 32] = std::mem::transmute_copy(&identity_hash);
-
-                ensure!(ed25519::verify_strong(&signature, &hash, &public), "Invalid signature");                
-            }
 
             ensure!(!<IdentityOf<T>>::exists(identity_hash), "Identity already exists");
             

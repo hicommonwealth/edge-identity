@@ -44,7 +44,6 @@ extern crate srml_system as system;
 
 use rstd::prelude::*;
 use runtime_support::dispatch::Result;
-use primitives::ed25519;
 
 pub mod identity;
 use identity::{Module, Trait, RawEvent};
@@ -58,8 +57,8 @@ mod tests {
     use runtime_io::with_externalities;
     use runtime_io::ed25519::Pair;
     use primitives::{H256, Blake2Hasher, Hasher};
-    // The testing primitives are very useful for avoiding having to work with signatures
-    // or public keys. `u64` is used as the `AccountId` and no `Signature`s are requried.
+    // The testing primitives are very useful for avoiding having to work with
+    // public keys. `u64` is used as the `AccountId` and no `Signature`s are requried.
     use runtime_primitives::{
         BuildStorage, traits::{BlakeTwo256}, testing::{Digest, DigestItem, Header}
     };
@@ -112,12 +111,13 @@ mod tests {
         // We use default for brevity, but you can configure as desired if needed.
         t.extend(identity::GenesisConfig::<Test>{
             claims_issuers: [H256::from(1), H256::from(2), H256::from(3)].to_vec(),
+            _genesis_phantom_data: Default::default(),
         }.build_storage().unwrap().0);
         t.into()
     }
 
-    fn publish_identity_attestation(who: H256, identity_hash: H256, signature: ed25519::Signature) -> super::Result {
-        Identity::publish(Origin::signed(who), identity_hash, signature)
+    fn publish_identity_attestation(who: H256, identity_hash: H256) -> super::Result {
+        Identity::publish(Origin::signed(who), identity_hash)
     }
 
     fn link_identity_with_proof(who: H256, identity_hash: H256, proof_link: &[u8]) -> super::Result {
@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[test]
-    fn propose_with_valid_sig_should_work() {
+    fn propose_should_work() {
         with_externalities(&mut new_test_ext(), || {
             System::set_block_number(1);
 
@@ -142,36 +142,15 @@ mod tests {
             let identity_hash = Blake2Hasher::hash(message);
             let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
 
-            let signature = pair.sign(&hash);
             let public: H256 = pair.public().0.into();
 
-            assert_ok!(publish_identity_attestation(public, identity_hash, signature));
+            assert_ok!(publish_identity_attestation(public, identity_hash));
             assert_eq!(System::events(), vec![
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
                     event: Event::identity(RawEvent::Published(H256::from(hash), 0, public))
                 }]
             );
-        });
-    }
-
-    #[test]
-    fn publish_with_invalid_sig_should_fail() {
-        with_externalities(&mut new_test_ext(), || {
-            System::set_block_number(1);
-
-            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
-            let wrong: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f61"));
-            let message: &[u8] = b"github.com/drewstone";
-            let identity_hash = Blake2Hasher::hash(message);
-
-            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
-
-            let signature = wrong.sign(&hash);
-            let public: H256 = pair.public().0.into();
-
-            assert_eq!(publish_identity_attestation(public, identity_hash, signature), Err("Invalid signature"));
-
         });
     }
 
@@ -185,10 +164,9 @@ mod tests {
             let identity_hash = Blake2Hasher::hash(message);
             let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
 
-            let signature = pair.sign(&hash);
             let public: H256 = pair.public().0.into();
 
-            assert_ok!(publish_identity_attestation(public, identity_hash, signature));
+            assert_ok!(publish_identity_attestation(public, identity_hash));
 
             let proof_link: &[u8] = b"www.proof.com/link_of_extra_proof";
             assert_ok!(link_identity_with_proof(public, identity_hash, proof_link));
@@ -217,6 +195,24 @@ mod tests {
 
             let proof_link: &[u8] = b"www.proof.com/link_of_extra_proof";
             assert_eq!(link_identity_with_proof(public, identity_hash, proof_link), Err("Identity does not exist"));
+        });
+    }
+
+    #[test]
+    fn link_from_different_account_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let other: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f61"));
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            let public: H256 = pair.public().0.into();
+            let other_pub: H256 = other.public().0.into();
+
+            assert_ok!(publish_identity_attestation(public, identity_hash));
+            let proof_link: &[u8] = b"www.proof.com/link_of_extra_proof";
+            assert_eq!(link_identity_with_proof(other_pub, identity_hash, proof_link), Err("Stored identity does not match sender"));
         });
     }
 
@@ -259,10 +255,9 @@ mod tests {
             let identity_hash = Blake2Hasher::hash(message);
             let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
 
-            let signature = pair.sign(&hash);
             let public: H256 = pair.public().0.into();
 
-            assert_ok!(publish_identity_attestation(public, identity_hash, signature));
+            assert_ok!(publish_identity_attestation(public, identity_hash));
             
             let issuer = H256::from(1);
             let claim: &[u8] = b"is over 25 years of age";
@@ -305,12 +300,9 @@ mod tests {
             let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
             let message: &[u8] = b"github.com/drewstone";
             let identity_hash = Blake2Hasher::hash(message);
-            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
-
-            let signature = pair.sign(&hash);
             let public: H256 = pair.public().0.into();
 
-            assert_ok!(publish_identity_attestation(public, identity_hash, signature));
+            assert_ok!(publish_identity_attestation(public, identity_hash));
             
             let issuer = H256::from(1);
             let claim: &[u8] = b"is over 25 years of age";
