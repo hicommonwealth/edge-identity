@@ -199,6 +199,24 @@ mod tests {
     }
 
     #[test]
+    fn link_from_different_account_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let other: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f61"));
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            let public: H256 = pair.public().0.into();
+            let other_pub: H256 = other.public().0.into();
+
+            assert_ok!(publish_identity_attestation(public, identity_hash));
+            let proof_link: &[u8] = b"www.proof.com/link_of_extra_proof";
+            assert_eq!(link_identity_with_proof(other_pub, identity_hash, proof_link), Err("Stored identity does not match sender"));
+        });
+    }
+
+    #[test]
     fn add_claim_without_valid_identity_should_not_work() {
         with_externalities(&mut new_test_ext(), || {
             System::set_block_number(1);
@@ -282,8 +300,6 @@ mod tests {
             let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
             let message: &[u8] = b"github.com/drewstone";
             let identity_hash = Blake2Hasher::hash(message);
-            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
-
             let public: H256 = pair.public().0.into();
 
             assert_ok!(publish_identity_attestation(public, identity_hash));
