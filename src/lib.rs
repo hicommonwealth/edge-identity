@@ -253,7 +253,6 @@ mod tests {
             let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
             let message: &[u8] = b"github.com/drewstone";
             let identity_hash = Blake2Hasher::hash(message);
-            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
 
             let public: H256 = pair.public().0.into();
 
