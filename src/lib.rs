@@ -46,7 +46,7 @@ use rstd::prelude::*;
 use runtime_support::dispatch::Result;
 
 pub mod identity;
-use identity::{Module, Trait, RawEvent};
+pub use identity::{Module, Trait, RawEvent, Event};
 
 // Tests for Identity Module
 #[cfg(test)]
