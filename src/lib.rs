@@ -98,6 +98,7 @@ mod tests {
 
     impl Trait for Test {
         type Claim = Vec<u8>;
+        type IdentityIndex = u32;
         type Event = Event;
     }
 

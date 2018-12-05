@@ -34,18 +34,18 @@ extern crate sr_io as runtime_io;
 extern crate srml_balances as balances;
 extern crate srml_system as system;
 
-use runtime_primitives::traits::{MaybeSerializeDebug};
+use runtime_primitives::traits::{MaybeSerializeDebug, Member, As, SimpleArithmetic};
 use rstd::prelude::*;
 use system::ensure_signed;
 use runtime_support::{StorageValue, StorageMap, Parameter};
 use runtime_support::dispatch::Result;
-
-/// An identity index.
-pub type IdentityIndex = u32;
+use codec::{Codec};
 
 pub trait Trait: system::Trait {
     /// The claims type
     type Claim: Parameter + MaybeSerializeDebug;
+    /// Identity Index type
+    type IdentityIndex: Parameter + Member + Codec + Default + SimpleArithmetic + As<u8> + As<u16> + As<u32> + As<u64> + As<usize> + Copy;
     /// The overarching event type.
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 }
@@ -104,8 +104,8 @@ decl_module! {
             idents.push(identity_hash);
             <Identities<T>>::put(idents);
 
-            <IdentityOf<T>>::insert(identity_hash, (index, _sender.clone(), None));
-            Self::deposit_event(RawEvent::Published(identity_hash, index, _sender.clone().into()));
+            <IdentityOf<T>>::insert(identity_hash, (T::IdentityIndex::sa(index), _sender.clone(), None));
+            Self::deposit_event(RawEvent::Published(identity_hash, T::IdentityIndex::sa(index), _sender.clone().into()));
             Ok(())
         }
 
@@ -151,7 +151,8 @@ decl_module! {
 decl_event!(
     pub enum Event<T> where <T as system::Trait>::Hash,
                             <T as system::Trait>::AccountId,
-                            <T as Trait>::Claim  {
+                            <T as Trait>::Claim,
+                            <T as Trait>::IdentityIndex {
         Published(Hash, IdentityIndex, AccountId),
         Linked(Hash, IdentityIndex, AccountId),
         AddedClaim(Hash, Claim, AccountId),
@@ -162,13 +163,13 @@ decl_event!(
 decl_storage! {
     trait Store for Module<T: Trait> as IdentityStorage {
         /// The number of identities that have been added.
-        pub IdentityCount get(identity_count): u32;
+        pub IdentityCount get(identity_count): usize;
         /// The hashed identities.
         pub Identities get(identities): Vec<(T::Hash)>;
         /// Actual identity for a given hash, if it's current.
-        pub IdentityOf get(identity_of): map T::Hash => Option<(IdentityIndex, T::AccountId, Option<LinkedProof>)>;
+        pub IdentityOf get(identity_of): map T::Hash => Option<(T::IdentityIndex, T::AccountId, Option<LinkedProof>)>;
         /// The number of linked identities that have been added.
-        pub LinkedIdentityCount get(linked_count): u32;
+        pub LinkedIdentityCount get(linked_count): usize;
         /// The set of active claims issuers
         pub ClaimsIssuers get(claims_issuers) config(): Vec<T::AccountId>;
         /// The claims mapping for identity records: (claims_issuer, claim)
