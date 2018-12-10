@@ -52,6 +52,10 @@ pub trait Trait: system::Trait {
 
 pub type LinkedProof = Vec<u8>;
 
+pub type Avatar = Vec<u8>;
+pub type DisplayName = Vec<u8>;
+pub type TagLine = Vec<u8>;
+
 decl_module! {
     pub struct Module<T: Trait> for enum Call where origin: T::Origin {
         fn deposit_event() = default;
@@ -106,6 +110,16 @@ decl_module! {
 
             <IdentityOf<T>>::insert(identity_hash, (T::IdentityIndex::sa(index), _sender.clone(), None));
             Self::deposit_event(RawEvent::Published(identity_hash, T::IdentityIndex::sa(index), _sender.clone().into()));
+            Ok(())
+        }
+
+        /// Add metadata to sender's account. Always overwrites existing metadata.
+        /// TODO: limit the max length of these user-submitted types?
+        /// TODO: add a field relating to verification?
+        /// TODO: worth adding an event when someone updates their metadata?
+        pub fn add_metadata(origin, avatar: Avatar, display_name : DisplayName, tagline : TagLine) -> Result {
+            let _sender = ensure_signed(origin)?;
+            <IdentityMetadata<T>>::insert(_sender, (avatar, display_name, tagline));
             Ok(())
         }
 
@@ -168,6 +182,8 @@ decl_storage! {
         pub Identities get(identities): Vec<(T::Hash)>;
         /// Actual identity for a given hash, if it's current.
         pub IdentityOf get(identity_of): map T::Hash => Option<(T::IdentityIndex, T::AccountId, Option<LinkedProof>)>;
+        /// User-submitted data associated with an identity
+        pub IdentityMetadata get(identity_metadata): map T::AccountId => (Avatar, DisplayName, TagLine);
         /// The number of linked identities that have been added.
         pub LinkedIdentityCount get(linked_count): usize;
         /// The set of active claims issuers

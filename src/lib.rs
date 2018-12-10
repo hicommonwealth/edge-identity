@@ -125,6 +125,10 @@ mod tests {
         Identity::link(Origin::signed(who), identity_hash, proof_link.to_vec())
     }
 
+    fn add_metadata_to_account(who: H256, avatar: &[u8], display_name: &[u8], tagline: &[u8]) -> super::Result {
+        Identity::add_metadata(Origin::signed(who), avatar.to_vec(), display_name.to_vec(), tagline.to_vec())
+    }
+
     fn add_claim_to_identity(who: H256, identity_hash: H256, claim: &[u8]) -> super::Result {
         Identity::add_claim(Origin::signed(who), identity_hash, claim.to_vec())
     }
@@ -214,6 +218,22 @@ mod tests {
             assert_ok!(publish_identity_attestation(public, identity_hash));
             let proof_link: &[u8] = b"www.proof.com/link_of_extra_proof";
             assert_eq!(link_identity_with_proof(other_pub, identity_hash, proof_link), Err("Stored identity does not match sender"));
+        });
+    }
+
+    #[test]
+    fn add_metadata_should_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let avatar: &[u8] = b"OhBQ5kk1PMB025OZ7K2CsjSAeY6xGv+H7dCiEcHu31";
+            let display_name: &[u8] = b"drewstone";
+            let tagline: &[u8] = b"hello world!";
+
+            let public: H256 = pair.public().0.into();
+
+            assert_ok!(add_metadata_to_account(public, avatar, display_name, tagline));
         });
     }
 
