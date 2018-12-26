@@ -1,5 +1,5 @@
 # edge_identity
-This module contains the api for registering and linking identities on Edgeware. Users will register hashes of identities, providing a signature that they have also signed such a hash. In addition, this module enables claims issuers who are fed into the system at the genesis block to issue claims over identities and remove such claims.
+This module contains the api for registering and linking identities on Edgeware. Users will register hashes of identities, which are any third-party external identity such as a username, a Github account, or another BLockchain public key. In addition, this module enables claims issuers who are fed into the system at the genesis block to issue claims over identities and remove such claims.
 
 # Setup
 Install rust or update to the latest versions.
