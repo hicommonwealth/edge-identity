@@ -1,5 +1,5 @@
 [package]
-name = "edge_identity"
+name = "edge-identity"
 version = "0.1.0"
 authors = ["Drew Stone <drew@commonwealth.im>"]
 
