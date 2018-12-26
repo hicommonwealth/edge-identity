@@ -44,50 +44,31 @@ use codec::{Codec};
 pub trait Trait: system::Trait {
     /// The claims type
     type Claim: Parameter + MaybeSerializeDebug;
-    /// Identity Index type
-    type IdentityIndex: Parameter + Member + Codec + Default + SimpleArithmetic + As<u8> + As<u16> + As<u32> + As<u64> + As<usize> + Copy;
     /// The overarching event type.
     type Event: From<Event<Self>> + Into<<Self as system::Trait>::Event>;
 }
 
 pub type LinkedProof = Vec<u8>;
 
-pub type Avatar = Vec<u8>;
-pub type DisplayName = Vec<u8>;
-pub type TagLine = Vec<u8>;
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Encode, Decode, PartialEq)]
+pub struct MetadataRecord {
+    pub avatar: Vec<u8>,
+    pub display_name: Vec<u8>,
+    pub tagline: Vec<u8>,
+}
+
+#[cfg_attr(feature = "std", derive(Debug))]
+#[derive(Encode, Decode, PartialEq)]
+pub struct IdentityRecord<AccountId> {
+    pub account: AccountId,
+    pub proof: Option<LinkedProof>,
+    pub metadata: Option<MetadataRecord>,
+}
 
 decl_module! {
     pub struct Module<T: Trait> for enum Call where origin: T::Origin {
         fn deposit_event() = default;
-
-        /// Link an external proof to an existing identity iff the sender
-        /// is the original publisher of said identity.
-        /// 
-        /// Current implementation overwrites all proofs if safety checks
-        /// pass.
-        pub fn link(origin, identity_hash: T::Hash, proof_link: LinkedProof) -> Result {
-            let _sender = ensure_signed(origin)?;
-
-            // Check that identity exists
-            let (index, account, proof) = match <IdentityOf<T>>::get(identity_hash) {
-                Some((index, account, proof)) => (index, account, proof),
-                None => return Err("Identity does not exist"),
-            };
-
-            // Check that original sender and current sender match
-            ensure!(account == _sender, "Stored identity does not match sender");
-
-            // TODO: Decide how we want to process proof updates
-            // currently this implements no check against updating
-            // proof links
-            if !proof.is_some() {
-                <LinkedIdentityCount<T>>::mutate(|i| *i += 1);
-            };
-
-            <IdentityOf<T>>::insert(identity_hash, (index, _sender.clone(), Some(proof_link)));
-            Self::deposit_event(RawEvent::Linked(identity_hash, index, account));
-            Ok(())
-        }
 
         /// Publish an identity with the hash of the signature. Ensures that
         /// all identities are unique, so that no two identities of the same
@@ -102,24 +83,62 @@ decl_module! {
 
             ensure!(!<IdentityOf<T>>::exists(identity_hash), "Identity already exists");
             
-            let index = Self::identity_count();
-            <IdentityCount<T>>::mutate(|i| *i += 1);
             let mut idents = Self::identities();
             idents.push(identity_hash);
             <Identities<T>>::put(idents);
 
-            <IdentityOf<T>>::insert(identity_hash, (T::IdentityIndex::sa(index), _sender.clone(), None));
-            Self::deposit_event(RawEvent::Published(identity_hash, T::IdentityIndex::sa(index), _sender.clone().into()));
+            let record = IdentityRecord {
+                account: _sender.clone(),
+                proof: None,
+                metadata: None,
+            };
+            <IdentityOf<T>>::insert(identity_hash, record);
+            Self::deposit_event(RawEvent::Published(identity_hash, _sender.into()));
             Ok(())
         }
 
-        /// Add metadata to sender's account. Always overwrites existing metadata.
-        /// TODO: limit the max length of these user-submitted types?
-        /// TODO: add a field relating to verification?
-        /// TODO: worth adding an event when someone updates their metadata?
-        pub fn add_metadata(origin, avatar: Avatar, display_name : DisplayName, tagline : TagLine) -> Result {
+        /// Link an external proof to an existing identity iff the sender
+        /// is the original publisher of said identity.
+        /// 
+        /// Current implementation overwrites all proofs if safety checks
+        /// pass.
+        pub fn link(origin, identity_hash: T::Hash, proof_link: LinkedProof) -> Result {
             let _sender = ensure_signed(origin)?;
-            <IdentityMetadata<T>>::insert(_sender, (avatar, display_name, tagline));
+            let record = <IdentityOf<T>>::get(&identity_hash).ok_or("Identity does not exist")?;
+
+            // Check that original sender and current sender match
+            ensure!(record.account == _sender, "Stored identity does not match sender");
+
+            // TODO: Decide how we want to process proof updates
+            // currently this implements no check against updating
+            // proof links
+            let mut new_record = record;
+            new_record.proof = Some(proof_link);
+            <IdentityOf<T>>::insert(identity_hash, new_record);
+            Self::deposit_event(RawEvent::Linked(identity_hash, _sender.into()));
+            Ok(())
+        }
+
+        /// Add metadata to sender's account.
+        // TODO: make all options and only updated provided?
+        // TODO: limit the max length of these user-submitted types?
+        // TODO: add a field relating to verification?
+        pub fn add_metadata(origin, identity_hash: T::Hash, avatar: Vec<u8>, display_name: Vec<u8>, tagline: Vec<u8>) -> Result {
+            let _sender = ensure_signed(origin)?;
+            let record = <IdentityOf<T>>::get(&identity_hash).ok_or("Identity does not exist")?;
+
+            // Check that original sender and current sender match
+            ensure!(record.account == _sender, "Stored identity does not match sender");
+
+            // TODO: Decide how to process metadata updates, for now it's all or nothing
+            let mut new_record = record;
+            new_record.metadata = Some(MetadataRecord {
+                avatar: avatar,
+                display_name: display_name,
+                tagline: tagline,
+            });
+            <IdentityOf<T>>::insert(identity_hash, new_record);
+            // TODO: worth adding an event?
             Ok(())
         }
 
@@ -165,10 +184,9 @@ decl_module! {
 decl_event!(
     pub enum Event<T> where <T as system::Trait>::Hash,
                             <T as system::Trait>::AccountId,
-                            <T as Trait>::Claim,
-                            <T as Trait>::IdentityIndex {
-        Published(Hash, IdentityIndex, AccountId),
-        Linked(Hash, IdentityIndex, AccountId),
+                            <T as Trait>::Claim {
+        Published(Hash, AccountId),
+        Linked(Hash, AccountId),
         AddedClaim(Hash, Claim, AccountId),
         RemovedClaim(Hash, Claim, AccountId),
     }
@@ -176,16 +194,10 @@ decl_event!(
 
 decl_storage! {
     trait Store for Module<T: Trait> as IdentityStorage {
-        /// The number of identities that have been added.
-        pub IdentityCount get(identity_count): usize;
         /// The hashed identities.
         pub Identities get(identities): Vec<(T::Hash)>;
         /// Actual identity for a given hash, if it's current.
-        pub IdentityOf get(identity_of): map T::Hash => Option<(T::IdentityIndex, T::AccountId, Option<LinkedProof>)>;
-        /// User-submitted data associated with an identity
-        pub IdentityMetadata get(identity_metadata): map T::AccountId => (Avatar, DisplayName, TagLine);
-        /// The number of linked identities that have been added.
-        pub LinkedIdentityCount get(linked_count): usize;
+        pub IdentityOf get(identity_of): map T::Hash => Option<IdentityRecord<T::AccountId>>;
         /// The set of active claims issuers
         pub ClaimsIssuers get(claims_issuers) config(): Vec<T::AccountId>;
         /// The claims mapping for identity records: (claims_issuer, claim)

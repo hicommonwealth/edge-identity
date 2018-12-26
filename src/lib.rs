@@ -98,7 +98,6 @@ mod tests {
 
     impl Trait for Test {
         type Claim = Vec<u8>;
-        type IdentityIndex = u32;
         type Event = Event;
     }
 
@@ -124,8 +123,8 @@ mod tests {
         Identity::link(Origin::signed(who), identity_hash, proof_link.to_vec())
     }
 
-    fn add_metadata_to_account(who: H256, avatar: &[u8], display_name: &[u8], tagline: &[u8]) -> super::Result {
-        Identity::add_metadata(Origin::signed(who), avatar.to_vec(), display_name.to_vec(), tagline.to_vec())
+    fn add_metadata_to_account(who: H256, identity_hash: H256, avatar: &[u8], display_name: &[u8], tagline: &[u8]) -> super::Result {
+        Identity::add_metadata(Origin::signed(who), identity_hash, avatar.to_vec(), display_name.to_vec(), tagline.to_vec())
     }
 
     fn add_claim_to_identity(who: H256, identity_hash: H256, claim: &[u8]) -> super::Result {
@@ -152,7 +151,7 @@ mod tests {
             assert_eq!(System::events(), vec![
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
-                    event: Event::identity(RawEvent::Published(H256::from(hash), 0, public))
+                    event: Event::identity(RawEvent::Published(H256::from(hash), public))
                 }]
             );
         });
@@ -177,11 +176,11 @@ mod tests {
             assert_eq!(System::events(), vec![
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
-                    event: Event::identity(RawEvent::Published(H256::from(hash), 0, public))
+                    event: Event::identity(RawEvent::Published(H256::from(hash), public))
                 },
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
-                    event: Event::identity(RawEvent::Linked(H256::from(hash), 0, public))
+                    event: Event::identity(RawEvent::Linked(H256::from(hash), public))
                 }]
             );
         });
@@ -224,15 +223,58 @@ mod tests {
     fn add_metadata_should_work() {
         with_externalities(&mut new_test_ext(), || {
             System::set_block_number(1);
-
             let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
-            let avatar: &[u8] = b"OhBQ5kk1PMB025OZ7K2CsjSAeY6xGv+H7dCiEcHu31";
-            let display_name: &[u8] = b"drewstone";
-            let tagline: &[u8] = b"hello world!";
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            let hash: [u8; 32] = <[u8; 32]>::from(Blake2Hasher::hash(message));
 
             let public: H256 = pair.public().0.into();
 
-            assert_ok!(add_metadata_to_account(public, avatar, display_name, tagline));
+            let avatar: &[u8] = b"avatars3.githubusercontent.com/u/13153687";
+            let display_name: &[u8] = b"drewstone";
+            let tagline: &[u8] = b"hello world!";
+
+            assert_ok!(publish_identity_attestation(public, identity_hash));
+            assert_ok!(add_metadata_to_account(public, identity_hash, avatar, display_name, tagline));
+        });
+    }
+
+    #[test]
+    fn add_metadata_without_publish_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            let public: H256 = pair.public().0.into();
+
+
+            let avatar: &[u8] = b"avatars3.githubusercontent.com/u/13153687";
+            let display_name: &[u8] = b"drewstone";
+            let tagline: &[u8] = b"hello world!";
+            assert_eq!(add_metadata_to_account(public, identity_hash, avatar, display_name, tagline), Err("Identity does not exist"));
+        });
+    }
+
+    #[test]
+    fn add_metadata_from_different_account_should_not_work() {
+        with_externalities(&mut new_test_ext(), || {
+            System::set_block_number(1);
+
+            let pair: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60"));
+            let other: Pair = Pair::from_seed(&hex!("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f61"));
+            let message: &[u8] = b"github.com/drewstone";
+            let identity_hash = Blake2Hasher::hash(message);
+            let public: H256 = pair.public().0.into();
+            let other_pub: H256 = other.public().0.into();
+
+            let avatar: &[u8] = b"avatars3.githubusercontent.com/u/13153687";
+            let display_name: &[u8] = b"drewstone";
+            let tagline: &[u8] = b"hello world!";
+
+            assert_ok!(publish_identity_attestation(public, identity_hash));
+            assert_eq!(add_metadata_to_account(other_pub, identity_hash, avatar, display_name, tagline), Err("Stored identity does not match sender"));
         });
     }
 
