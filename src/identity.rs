@@ -34,7 +34,7 @@ extern crate sr_io as runtime_io;
 extern crate srml_balances as balances;
 extern crate srml_system as system;
 
-use runtime_primitives::traits::{MaybeSerializeDebug, Member, As, SimpleArithmetic};
+use runtime_primitives::traits::{Hash, MaybeSerializeDebug, Member, As, SimpleArithmetic};
 use rstd::prelude::*;
 use system::ensure_signed;
 use runtime_support::{StorageValue, StorageMap, Parameter};
@@ -62,6 +62,7 @@ pub struct MetadataRecord {
 #[derive(Encode, Decode, PartialEq)]
 pub struct IdentityRecord<AccountId> {
     pub account: AccountId,
+    pub attestation: Vec<u8>,
     pub proof: Option<LinkedProof>,
     pub metadata: Option<MetadataRecord>,
 }
@@ -78,22 +79,24 @@ decl_module! {
         /// implementations could provide a mechanism for a trusted set of
         /// authorities to delete a squatted identity OR implement storage
         /// rent to disincentivize it.
-        pub fn publish(origin, identity_hash: T::Hash) -> Result {
+        pub fn publish(origin, attestation: Vec<u8>) -> Result {
             let _sender = ensure_signed(origin)?;
+            let hash = T::Hashing::hash_of(&attestation);
 
-            ensure!(!<IdentityOf<T>>::exists(identity_hash), "Identity already exists");
+            ensure!(!<IdentityOf<T>>::exists(hash), "Identity already exists");
             
             let mut idents = Self::identities();
-            idents.push(identity_hash);
+            idents.push(hash);
             <Identities<T>>::put(idents);
 
             let record = IdentityRecord {
                 account: _sender.clone(),
+                attestation: attestation,
                 proof: None,
                 metadata: None,
             };
-            <IdentityOf<T>>::insert(identity_hash, record);
-            Self::deposit_event(RawEvent::Published(identity_hash, _sender.into()));
+            <IdentityOf<T>>::insert(hash, record);
+            Self::deposit_event(RawEvent::Published(hash, _sender.into()));
             Ok(())
         }
 
