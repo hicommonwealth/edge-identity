@@ -23,23 +23,22 @@ extern crate serde;
 // We only implement the serde traits for std builds - they're unneeded
 // in the wasm runtime.
 #[cfg(feature = "std")]
-
 extern crate parity_codec as codec;
-extern crate substrate_primitives as primitives;
+extern crate sr_io as runtime_io;
+extern crate sr_primitives as runtime_primitives;
 extern crate sr_std as rstd;
 extern crate srml_support as runtime_support;
-extern crate sr_primitives as runtime_primitives;
-extern crate sr_io as runtime_io;
+extern crate substrate_primitives as primitives;
 
 extern crate srml_balances as balances;
 extern crate srml_system as system;
 
-use runtime_primitives::traits::{Hash, MaybeSerializeDebug, Member, As, SimpleArithmetic};
+use codec::Codec;
 use rstd::prelude::*;
-use system::ensure_signed;
-use runtime_support::{StorageValue, StorageMap, Parameter};
+use runtime_primitives::traits::{As, Hash, MaybeSerializeDebug, Member, SimpleArithmetic};
 use runtime_support::dispatch::Result;
-use codec::{Codec};
+use runtime_support::{Parameter, StorageMap, StorageValue};
+use system::ensure_signed;
 
 pub trait Trait: system::Trait {
     /// The claims type
@@ -74,7 +73,7 @@ decl_module! {
         /// Publish an identity with the hash of the signature. Ensures that
         /// all identities are unique, so that no two identities of the same
         /// can be published.
-        /// 
+        ///
         /// Current implementation suffers from squatter attacks. Additional
         /// implementations could provide a mechanism for a trusted set of
         /// authorities to delete a squatted identity OR implement storage
@@ -84,7 +83,7 @@ decl_module! {
             let hash = T::Hashing::hash_of(&attestation);
 
             ensure!(!<IdentityOf<T>>::exists(hash), "Identity already exists");
-            
+
             let mut idents = Self::identities();
             idents.push(hash);
             <Identities<T>>::put(idents);
@@ -102,7 +101,7 @@ decl_module! {
 
         /// Link an external proof to an existing identity iff the sender
         /// is the original publisher of said identity.
-        /// 
+        ///
         /// Current implementation overwrites all proofs if safety checks
         /// pass.
         pub fn link(origin, identity_hash: T::Hash, proof_link: LinkedProof) -> Result {
@@ -150,7 +149,7 @@ decl_module! {
         /// hash exists in the Identities map.
         pub fn add_claim(origin, identity_hash: T::Hash, claim: T::Claim) -> Result {
             let _sender = ensure_signed(origin)?;
-            
+
             let issuers: Vec<T::AccountId> = Self::claims_issuers();
             ensure!(issuers.iter().any(|id| id == &_sender), "Invalid claims issuer");
             ensure!(<IdentityOf<T>>::exists(identity_hash), "Invalid identity record");
