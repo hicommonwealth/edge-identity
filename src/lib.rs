@@ -116,7 +116,7 @@ mod tests {
     }
 
     fn publish_identity_attestation(who: H256, attestation: &[u8]) -> super::Result {
-        Identity::publish(Origin::signed(who), attestation.to_vec())
+        Identity::attest(Origin::signed(who), attestation.to_vec())
     }
 
     fn link_identity_with_proof(who: H256, identity_hash: H256, proof_link: &[u8]) -> super::Result {
@@ -150,7 +150,7 @@ mod tests {
             assert_eq!(System::events(), vec![
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
-                    event: Event::identity(RawEvent::Published(identity_hash, public))
+                    event: Event::identity(RawEvent::Attested(identity_hash, public))
                 }]
             );
         });
@@ -174,7 +174,7 @@ mod tests {
             assert_eq!(System::events(), vec![
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),
-                    event: Event::identity(RawEvent::Published(identity_hash, public))
+                    event: Event::identity(RawEvent::Attested(identity_hash, public))
                 },
                 EventRecord {
                     phase: Phase::ApplyExtrinsic(0),

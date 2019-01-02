@@ -79,7 +79,7 @@ decl_module! {
         /// implementations could provide a mechanism for a trusted set of
         /// authorities to delete a squatted identity OR implement storage
         /// rent to disincentivize it.
-        pub fn publish(origin, attestation: Vec<u8>) -> Result {
+        pub fn attest(origin, attestation: Vec<u8>) -> Result {
             let _sender = ensure_signed(origin)?;
             let hash = T::Hashing::hash_of(&attestation);
 
@@ -96,7 +96,7 @@ decl_module! {
                 metadata: None,
             };
             <IdentityOf<T>>::insert(hash, record);
-            Self::deposit_event(RawEvent::Published(hash, _sender.into()));
+            Self::deposit_event(RawEvent::Attested(hash, _sender.into()));
             Ok(())
         }
 
@@ -188,7 +188,7 @@ decl_event!(
     pub enum Event<T> where <T as system::Trait>::Hash,
                             <T as system::Trait>::AccountId,
                             <T as Trait>::Claim {
-        Published(Hash, AccountId),
+        Attested(Hash, AccountId),
         Linked(Hash, AccountId),
         AddedClaim(Hash, Claim, AccountId),
         RemovedClaim(Hash, Claim, AccountId),
